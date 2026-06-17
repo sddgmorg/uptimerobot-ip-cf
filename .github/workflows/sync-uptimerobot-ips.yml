@@ -1,0 +1,29 @@
+name: Sync UptimeRobot IPs to Cloudflare
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Sync IP list
+        run: python scripts/sync_uptimerobot_ips.py
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_LIST_ID: ${{ secrets.CF_LIST_ID }}
+          CF_LIST_NAME: uptimerobot_ips
