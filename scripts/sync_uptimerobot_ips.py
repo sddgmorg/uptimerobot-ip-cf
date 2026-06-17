@@ -122,19 +122,22 @@ def get_or_create_ip_list(account_id, api_token, list_name, list_id=None):
 def get_all_list_items(account_id, api_token, list_id):
     items = []
     cursor = None
+    seen_cursors = set()
 
     while True:
-        query = {"per_page": "1000"}
+        path = f"/accounts/{account_id}/rules/lists/{list_id}/items"
         if cursor:
-            query["cursor"] = cursor
+            path = f"{path}?{urllib.parse.urlencode({'cursor': cursor})}"
 
-        path = f"/accounts/{account_id}/rules/lists/{list_id}/items?{urllib.parse.urlencode(query)}"
         response = cloudflare_api(api_token, "GET", path)
         items.extend(response["result"])
 
         cursor = response.get("result_info", {}).get("cursors", {}).get("after")
         if not cursor:
             return items
+        if cursor in seen_cursors:
+            raise RuntimeError("Cloudflare returned a repeated list-items cursor")
+        seen_cursors.add(cursor)
 
 
 def add_list_items(account_id, api_token, list_id, ips):
