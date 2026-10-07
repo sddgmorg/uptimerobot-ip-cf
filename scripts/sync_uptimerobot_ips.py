@@ -11,6 +11,7 @@ import urllib.request
 CLOUDFLARE_API_BASE = "https://api.cloudflare.com/client/v4"
 UPTIMEROBOT_META_URL = "https://api.uptimerobot.com/meta/ips"
 UPTIMEROBOT_TEXT_URL = "https://cdn.uptimerobot.com/api/IPv4andIPv6.txt"
+HETRIXTOOLS_TEXT_URL = "https://hetrixtools.com/resources/uptime-monitor-only-ips.txt"
 DEFAULT_LIST_NAME = "uptimerobot_ips"
 MANAGED_COMMENT = "Managed by uptimerobot-ip-cf"
 BULK_OPERATION_TIMEOUT_SECONDS = 90
@@ -22,7 +23,10 @@ def main():
     list_name = os.getenv("CF_LIST_NAME", DEFAULT_LIST_NAME)
     list_id = os.getenv("CF_LIST_ID")
 
-    desired_ips = fetch_uptimerobot_ips()
+    # Fetch and validate both providers before making any Cloudflare changes.
+    uptimerobot_ips = fetch_uptimerobot_ips()
+    hetrixtools_ips = fetch_hetrixtools_ips()
+    desired_ips = sort_and_dedupe(uptimerobot_ips + hetrixtools_ips)
     target_list = get_or_create_ip_list(account_id, api_token, list_name, list_id)
     current_items = get_all_list_items(account_id, api_token, target_list["id"])
 
@@ -43,6 +47,8 @@ def main():
                 "list_name": target_list["name"],
                 "list_id": target_list["id"],
                 "desired_count": len(desired_ips),
+                "uptimerobot_count": len(uptimerobot_ips),
+                "hetrixtools_count": len(hetrixtools_ips),
                 "existing_count": len(current_items),
                 "added_count": len(ips_to_add),
                 "removed_count": len(items_to_remove),
@@ -75,23 +81,46 @@ def fetch_uptimerobot_meta_ips():
 
     ips = []
     for prefix in prefixes:
-        ips.append(normalize_prefix(prefix.get("ip_prefix")))
-        ips.append(normalize_prefix(prefix.get("ipv6_prefix")))
+        if not isinstance(prefix, dict):
+            raise RuntimeError("UptimeRobot meta response contained an invalid prefix entry")
+        values = [prefix[key] for key in ("ip_prefix", "ipv6_prefix") if key in prefix]
+        if not values:
+            raise RuntimeError("UptimeRobot meta prefix entry did not contain an IP")
+        ips.extend(values)
 
-    return sort_and_dedupe(ip for ip in ips if ip)
+    return validate_source_ips(ips, "UptimeRobot meta")
 
 
 def fetch_uptimerobot_text_ips():
-    text = http_text("GET", UPTIMEROBOT_TEXT_URL, headers={"Accept": "text/plain"})
-    ips = []
-    for line in text.splitlines():
-        line = line.strip()
-        if line and not line.startswith("#"):
-            ips.append(normalize_prefix(line))
+    return fetch_text_ips(UPTIMEROBOT_TEXT_URL, "UptimeRobot text")
 
-    result = sort_and_dedupe(ip for ip in ips if ip)
+
+def fetch_hetrixtools_ips():
+    return fetch_text_ips(HETRIXTOOLS_TEXT_URL, "HetrixTools text")
+
+
+def fetch_text_ips(url, source):
+    text = http_text("GET", url, headers={
+        "Accept": "text/plain",
+        "User-Agent": "uptimerobot-ip-cf/1.0 (+https://github.com/sddgmorg/uptimerobot-ip-cf)",
+    })
+    lines = [line.strip() for line in text.splitlines()]
+    return validate_source_ips(
+        [line for line in lines if line and not line.startswith("#")], source
+    )
+
+
+def validate_source_ips(values, source):
+    ips = []
+    for value in values:
+        ip = normalize_prefix(value)
+        if ip is None:
+            raise RuntimeError(f"{source} response contained an invalid IP: {value!r}")
+        ips.append(ip)
+
+    result = sort_and_dedupe(ips)
     if not result:
-        raise RuntimeError("UptimeRobot text response did not contain any valid IPs")
+        raise RuntimeError(f"{source} response did not contain any valid IPs")
     return result
 
 
@@ -113,7 +142,7 @@ def get_or_create_ip_list(account_id, api_token, list_name, list_id=None):
         {
             "kind": "ip",
             "name": list_name,
-            "description": "UptimeRobot checker IPs synced by GitHub Actions",
+            "description": "UptimeRobot and HetrixTools checker IPs synced by GitHub Actions",
         },
     )
     return response["result"]

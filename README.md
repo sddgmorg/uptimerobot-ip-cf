@@ -1,6 +1,6 @@
 # uptimerobot-ip-cf
 
-Simple GitHub Actions job that keeps a Cloudflare Account IP List synced with UptimeRobot checker IPs.
+Simple GitHub Actions job that keeps a Cloudflare Account IP List synced with UptimeRobot and HetrixTools checker IPs.
 
 No `npm`, no local install, and no server needed.
 
@@ -16,15 +16,24 @@ If that fails, it falls back to:
 https://cdn.uptimerobot.com/api/IPv4andIPv6.txt
 ```
 
+It also fetches HetrixTools' IP-only text feed, linked from their
+[uptime monitoring IP documentation](https://docs.hetrixtools.com/uptime-monitoring-ip-addresses/):
+
+```txt
+https://hetrixtools.com/resources/uptime-monitor-only-ips.txt
+```
+
 ## What It Does
 
 - Creates or finds a Cloudflare account IP list named `uptimerobot_ips`.
-- Adds new UptimeRobot IPv4 and IPv6 addresses.
-- Removes stale addresses that are no longer published by UptimeRobot.
-- Runs every 6 hours using GitHub Actions.
+- Combines and deduplicates both providers' IPv4 and IPv6 addresses.
+- Adds new addresses and removes stale addresses only when neither provider publishes them.
+- Validates both feeds before changing Cloudflare; a failed, empty, or malformed feed aborts the sync (after trying UptimeRobot's fallback).
+- Runs on pushes to `main` and every 6 hours using GitHub Actions, with one sync running at a time.
 - Can also be run manually from the GitHub Actions page.
 
 Use this list from a Cloudflare WAF custom rule instead of hardcoding IPs into the rule expression.
+The existing `uptimerobot_ips` name is retained so rules already referencing it automatically cover both providers. No new secrets or separate list are required.
 
 ## Cloudflare API Token
 
@@ -56,7 +65,7 @@ CF_API_TOKEN
 Then go to:
 
 ```txt
-Actions -> Sync UptimeRobot IPs to Cloudflare -> Run workflow
+Actions -> Sync monitoring IPs to Cloudflare -> Run workflow
 ```
 
 That runs it immediately. After that, GitHub will run it automatically every 6 hours.
@@ -86,6 +95,13 @@ scripts/sync_uptimerobot_ips.py
 ```
 
 The script uses only Python's standard library, so there are no packages to install.
+Each run tests the sync logic before updating Cloudflare and logs per-provider counts plus the combined, added, and removed counts.
+
+Run the tests locally with:
+
+```sh
+python3 -m unittest discover -s tests -v
+```
 
 ## WAF Rule
 
